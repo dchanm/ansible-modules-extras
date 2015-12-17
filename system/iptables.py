@@ -214,6 +214,10 @@ options:
     description:
       - "Specifies the maximum average number of matches to allow per second. The number can specify units explicitly, using `/second', `/minute', `/hour' or `/day', or parts of them (so `5/second' is the same as `5/s')."
     required: false
+  rulenum:
+    description:
+      - "Specifies the one-based line index to insert a rule. This will shift all rules at `rulenum' down one."
+    required: false
 '''
 
 EXAMPLES = '''
@@ -227,6 +231,10 @@ EXAMPLES = '''
 
 # Allow related and established connections
 - iptables: chain=INPUT ctstate=ESTABLISHED,RELATED jump=ACCEPT
+  become: yes
+
+# Add a block rule to beginning of chain
+- iptables: chain=INPUT rulenum=1 source=8.8.8.8 jump=DROP
   become: yes
 '''
 
@@ -285,6 +293,10 @@ def push_arguments(iptables_path, action, params):
     cmd = [iptables_path]
     cmd.extend(['-t', params['table']])
     cmd.extend([action, params['chain']])
+
+    if 'rulenum' in params:
+        cmd.extend([params['rulenum']])
+
     cmd.extend(construct_rule(params))
     return cmd
 
@@ -297,6 +309,11 @@ def check_present(iptables_path, module, params):
 
 def append_rule(iptables_path, module, params):
     cmd = push_arguments(iptables_path, '-A', params)
+    module.run_command(cmd, check_rc=True)
+
+
+def insert_rule(iptables_path, module, params):
+    cmd = push_arguments(iptables_path, '-I', params)
     module.run_command(cmd, check_rc=True)
 
 
@@ -329,6 +346,7 @@ def main():
             comment=dict(required=False, default=None, type='str'),
             ctstate=dict(required=False, default=[], type='list'),
             limit=dict(required=False, default=None, type='str'),
+            rulenum=dict(required=False, default=None, type='str'),
         ),
     )
     args = dict(
@@ -342,6 +360,9 @@ def main():
     )
     ip_version = module.params['ip_version']
     iptables_path = module.get_bin_path(BINS[ip_version], True)
+
+    # rulenum isn't valid for check
+    rulenum = module.params.pop('rulenum')
     rule_is_present = check_present(iptables_path, module, module.params)
     should_be_present = (args['state'] == 'present')
 
@@ -357,7 +378,12 @@ def main():
         module.exit_json(**args)
 
     if should_be_present:
-        append_rule(iptables_path, module, module.params)
+        if rulenum is not None:
+            # add back in rulenum for push_arguments
+            module.params['rulenum'] = rulenum
+            insert_rule(iptables_path, module, module.params)
+        else:
+            append_rule(iptables_path, module, module.params)
     else:
         remove_rule(iptables_path, module, module.params)
 
